@@ -1,0 +1,75 @@
+﻿#pragma kernel NoiseGenerator
+
+RWTexture2D<float4> Result;
+float seed;
+uint width;
+uint height;
+
+float cellSizeX;
+float cellSizeY;
+
+
+float rand1d (float x) {
+	float k = sin(x);
+	return frac(abs(frac(k * 7930.67450 * seed)) * 3497.97350 + k + seed);
+}
+
+float2 randUnitVector (float2 i, int index) {
+	float res = rand1d(i.x + i.y + index * i.x * i.y) * 6.28;
+
+	return float2(cos(res), sin(res));
+}
+
+void generateNeighborVectors (float2 uv, out float2 result[4], int index) {
+	int2 ceiluv = ceil(uv);
+	ceiluv.x %= round(width / cellSizeX);
+	ceiluv.y %= round(height / cellSizeY);
+
+	result[0] = randUnitVector(ceiluv, index);
+	result[1] = randUnitVector(float2(floor(uv.x), ceiluv.y), index);
+	result[2] = randUnitVector(floor(uv), index);
+	result[3] = randUnitVector(float2(ceiluv.x, floor(uv.y)), index);
+}
+
+void evaluateNeighborValues (float2 uv, out float result[4], int index) {
+	float2 directions[4];
+	generateNeighborVectors(uv, directions, index);
+
+	float2 v1 = uv - ceil(uv);
+	float2 v2 = uv - float2(floor(uv.x), ceil(uv.y));
+	float2 v3 = uv - floor(uv);
+	float2 v4 = uv - float2(ceil(uv.x), floor(uv.y));
+
+	result[0] = clamp(dot(directions[0], v1), -1, 1);
+	result[1] = clamp(dot(directions[1], v2), -1, 1);
+	result[2] = clamp(dot(directions[2], v3), -1, 1);
+	result[3] = clamp(dot(directions[3], v4), -1, 1);
+}
+
+float interpolationCoef (float k) {
+	return (3 - 2 * k) * k * k;
+}
+
+float perlinNoise (float2 uv, int index) {
+	float values[4];
+	evaluateNeighborValues(uv, values, index);
+
+	float top = lerp(values[1], values[0], interpolationCoef(frac(uv.x)));
+	float bot = lerp(values[2], values[3], interpolationCoef(frac(uv.x)));
+
+	float result = lerp(bot, top, interpolationCoef(frac(uv.y)));
+
+	return result / 2 + 0.5;
+}
+
+[numthreads(8,8,1)]
+void NoiseGenerator (uint3 id : SV_DispatchThreadID) {
+	float2 uv = float2(float(id.x) / cellSizeX, float(id.y) / cellSizeY);
+
+	float r = perlinNoise(uv, 1);
+	float g = perlinNoise(uv, 2);
+	float b = perlinNoise(uv, 3);
+	float a = perlinNoise(uv, 4);
+
+	Result[id.xy] = float4(r, g, b, a);
+}
